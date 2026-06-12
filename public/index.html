@@ -676,9 +676,11 @@
     white-space: nowrap;
   }
 
-  .pts { font-weight: 700; color: var(--text) !important; }
+  .pts { font-weight: 700; color: var(--red-bright) !important; }
   .qualify { background: rgba(232,0,28,0.08) !important; }
   .qualify td { border-left: 2px solid var(--red) !important; }
+  .qualify-third { background: rgba(255,170,0,0.06) !important; }
+  .qualify-third td { border-left: 2px solid #ffaa00 !important; }
 
   /* FIXTURES */
   .fixtures-list { display: flex; flex-direction: column; gap: 8px; }
@@ -1229,6 +1231,46 @@
     margin-bottom: 8px;
   }
 
+  /* SAVE INDICATOR */
+  .save-indicator {
+    position: fixed;
+    top: 72px;
+    right: 16px;
+    background: var(--black3);
+    border: 1px solid rgba(100,255,100,0.3);
+    border-radius: 6px;
+    padding: 6px 12px;
+    font-family: 'Rajdhani', sans-serif;
+    font-weight: 600;
+    font-size: 12px;
+    letter-spacing: 1px;
+    color: #64ff64;
+    z-index: 9998;
+    opacity: 0;
+    transform: translateY(-8px);
+    transition: opacity 0.25s ease, transform 0.25s ease;
+    pointer-events: none;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .save-indicator.syncing {
+    border-color: rgba(255,170,0,0.4);
+    color: #ffaa00;
+    opacity: 1;
+    transform: translateY(0);
+  }
+  .save-indicator.saved {
+    border-color: rgba(100,255,100,0.35);
+    color: #64ff64;
+    opacity: 1;
+    transform: translateY(0);
+  }
+  .save-indicator.hidden {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+
   .podium-pos {
     width: 28px;
     height: 28px;
@@ -1252,6 +1294,10 @@
 
 <div class="grid-bg"></div>
 <div class="particles" id="particles"></div>
+<div class="save-indicator hidden" id="save-indicator">
+  <span id="save-indicator-icon">⟳</span>
+  <span id="save-indicator-text">Saving…</span>
+</div>
 
 <!-- HEADER -->
 <header>
@@ -1505,6 +1551,18 @@
     <div class="flex-between mt-24 mb-16">
       <div class="section-title" style="margin:0">Settings</div>
     </div>
+
+    <!-- Import / Export -->
+    <div style="border:1px solid var(--glass-border);border-radius:12px;padding:24px;background:var(--glass);margin-bottom:16px">
+      <h3 style="margin-bottom:8px;font-family:'Orbitron',sans-serif;font-weight:700;font-size:15px;letter-spacing:1px">📦 Import / Export Data</h3>
+      <p style="color:var(--text-dim);font-size:14px;line-height:1.6;margin-bottom:16px">Back up all tournament data as a JSON file, or restore from a previous backup.</p>
+      <div class="flex gap-8">
+        <button class="btn btn-ghost" onclick="exportData()">⬇ Export JSON</button>
+        <button class="btn btn-secondary" onclick="document.getElementById('import-file').click()">⬆ Import JSON</button>
+        <input type="file" id="import-file" accept=".json" style="display:none" onchange="importData(event)" />
+      </div>
+    </div>
+
     <div style="border:1px solid rgba(232,0,28,0.3);border-radius:12px;padding:24px;background:rgba(232,0,28,0.05)">
       <h3 style="margin-bottom:8px">⚠️ Danger Zone</h3>
       <p style="color:var(--text-dim);font-size:14px;line-height:1.6;margin-bottom:16px">Permanently delete every tournament, player, and champion stored in THE LOBBY. This cannot be undone.</p>
@@ -1554,6 +1612,31 @@
     <div class="flex gap-8">
       <button class="btn btn-secondary w-full" onclick="closeModal('delete-all-modal')">Cancel</button>
       <button class="btn btn-danger w-full" style="font-size:14px;padding:12px 24px" onclick="deleteAllData()">Delete Everything</button>
+    </div>
+  </div>
+</div>
+
+<!-- Edit Player Modal -->
+<div class="modal-overlay" id="edit-player-modal">
+  <div class="modal-box">
+    <button class="modal-close" onclick="closeModal('edit-player-modal')">✕</button>
+    <h3>Edit Player</h3>
+    <input type="hidden" id="edit-p-id" />
+    <div class="form-group">
+      <label>Player Name</label>
+      <input type="text" id="edit-p-name" placeholder="e.g. Mohamed" />
+    </div>
+    <div class="form-group">
+      <label>Country</label>
+      <input type="text" id="edit-p-country" placeholder="e.g. Tunisia" />
+    </div>
+    <div class="form-group">
+      <label>Discord Name</label>
+      <input type="text" id="edit-p-discord" placeholder="e.g. mo#1234" />
+    </div>
+    <div class="flex gap-8 mt-16">
+      <button class="btn btn-secondary w-full" onclick="closeModal('edit-player-modal')">Cancel</button>
+      <button class="btn btn-primary w-full" onclick="saveEditPlayer()">Save Changes</button>
     </div>
   </div>
 </div>
@@ -1668,16 +1751,40 @@ let DB = {
 };
 
 let saveTimeout = null;
+let saveHideTimeout = null;
+
+function showSaveIndicator(state) {
+  const el = document.getElementById('save-indicator');
+  const icon = document.getElementById('save-indicator-icon');
+  const text = document.getElementById('save-indicator-text');
+  clearTimeout(saveHideTimeout);
+  el.classList.remove('hidden', 'syncing', 'saved');
+  if (state === 'syncing') {
+    icon.textContent = '⟳';
+    text.textContent = 'Saving…';
+    el.classList.add('syncing');
+  } else {
+    icon.textContent = '✓';
+    text.textContent = 'Saved';
+    el.classList.add('saved');
+    saveHideTimeout = setTimeout(() => el.classList.add('hidden'), 2000);
+  }
+}
+
 function save() {
   // Debounce so rapid successive edits don't spam the server
   clearTimeout(saveTimeout);
+  showSaveIndicator('syncing');
   saveTimeout = setTimeout(() => {
     fetch('/api/data', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(DB)
+    }).then(() => {
+      showSaveIndicator('saved');
     }).catch(err => {
       console.error('Save failed:', err);
+      document.getElementById('save-indicator').classList.add('hidden');
       notify('Failed to save to server.', 'error');
     });
   }, 300);
@@ -1926,6 +2033,38 @@ function addPlayer() {
   notify(`✅ ${name} added!`, 'success');
 }
 
+function openEditPlayer(pid) {
+  const t = DB.tournaments[currentTournamentId];
+  if (!t) return;
+  const p = t.players.find(p => p.id === pid);
+  if (!p) return;
+  document.getElementById('edit-p-id').value = p.id;
+  document.getElementById('edit-p-name').value = p.name;
+  document.getElementById('edit-p-country').value = p.country || '';
+  document.getElementById('edit-p-discord').value = p.discord || '';
+  document.getElementById('edit-player-modal').classList.add('show');
+}
+
+function saveEditPlayer() {
+  const t = DB.tournaments[currentTournamentId];
+  if (!t) return;
+  const pid = document.getElementById('edit-p-id').value;
+  const p = t.players.find(p => p.id === pid);
+  if (!p) return;
+
+  const name = document.getElementById('edit-p-name').value.trim();
+  if (!name) return notify('Enter a player name.', 'error');
+
+  p.name = name;
+  p.country = document.getElementById('edit-p-country').value.trim();
+  p.discord = document.getElementById('edit-p-discord').value.trim();
+
+  save();
+  renderPlayers();
+  closeModal('edit-player-modal');
+  notify(`✅ ${name} updated!`, 'success');
+}
+
 function removePlayer(pid) {
   const t = DB.tournaments[currentTournamentId];
   if (!t) return;
@@ -1960,6 +2099,7 @@ function renderPlayers() {
         <div class="player-discord">${p.discord ? '#' + esc(p.discord) : ''}${p.country ? ' · ' + esc(p.country) : ''}</div>
       </div>
       ${assigned ? `<div class="player-team"><span class="flag">${assigned.flag}</span>${esc(assigned.name)}</div>` : ''}
+      <button class="btn btn-secondary" onclick="openEditPlayer('${p.id}')">✎</button>
       <button class="btn btn-danger" onclick="removePlayer('${p.id}')">✕</button>
     `;
     list.appendChild(div);
@@ -2100,6 +2240,10 @@ function renderGroups() {
     return;
   }
 
+  const isWC = t.type === 'worldcup2026';
+  const cfg = TYPE_CONFIG[t.type] || TYPE_CONFIG.custom;
+  const advance = cfg.advancePerGroup || 2;
+
   let html = '<div class="groups-grid">';
   Object.keys(t.groups).sort().forEach(gl => {
     const g = t.groups[gl];
@@ -2107,22 +2251,61 @@ function renderGroups() {
     html += `<div class="group-card">
       <div class="group-header"><span>GROUP ${gl}</span><span style="font-size:11px;color:var(--text-dim)">${g.members.length} Teams</span></div>
       <table class="standings-table">
-        <thead><tr><th>#</th><th>Team</th><th>P</th><th>W</th><th>D</th><th>L</th><th>GF</th><th>GA</th><th>GD</th><th>Pts</th></tr></thead>
+        <thead><tr><th>#</th><th>Team</th><th class="pts">Pts</th><th>W</th><th>D</th><th>L</th><th>GF</th><th>GA</th><th>GD</th></tr></thead>
         <tbody>`;
     ranked.forEach((m, idx) => {
       const s = g.standings[m.playerId] || { played:0,wins:0,draws:0,losses:0,gf:0,ga:0,points:0 };
-      const qualify = idx < 2 ? 'qualify' : '';
-      html += `<tr class="${qualify}">
+      let rowClass = '';
+      if (idx < advance) rowClass = 'qualify';
+      else if (isWC && idx === advance) rowClass = 'qualify-third';
+      html += `<tr class="${rowClass}">
         <td>${idx + 1}</td>
         <td><div class="team-cell"><span class="flag">${m.flag}</span>${esc(m.teamName)}<span style="font-size:10px;color:var(--text-muted);margin-left:4px">(${esc(m.playerName)})</span></div></td>
-        <td>${s.played}</td><td>${s.wins}</td><td>${s.draws}</td><td>${s.losses}</td>
+        <td class="pts">${s.points}</td><td>${s.wins}</td><td>${s.draws}</td><td>${s.losses}</td>
         <td>${s.gf}</td><td>${s.ga}</td><td>${s.gf - s.ga}</td>
-        <td class="pts">${s.points}</td>
       </tr>`;
     });
     html += '</tbody></table></div>';
   });
   html += '</div>';
+
+  if (isWC && cfg.bestThirdPlace) {
+    const thirds = [];
+    Object.keys(t.groups).sort().forEach(gl => {
+      const g = t.groups[gl];
+      const ranked = rankStandings(g);
+      if (ranked.length > advance) {
+        const m = ranked[advance];
+        const s = g.standings[m.playerId] || { played:0,wins:0,draws:0,losses:0,gf:0,ga:0,points:0 };
+        thirds.push({ m, s, groupLabel: gl });
+      }
+    });
+    thirds.sort((a, b) => {
+      if (b.s.points !== a.s.points) return b.s.points - a.s.points;
+      const gdA = a.s.gf - a.s.ga;
+      const gdB = b.s.gf - b.s.ga;
+      if (gdB !== gdA) return gdB - gdA;
+      return b.s.gf - a.s.gf;
+    });
+
+    html += `<div class="section-title" style="margin-top:24px">Best Third-Placed Teams <span class="accent">(Top ${cfg.bestThirdPlace} Qualify)</span></div>`;
+    html += `<div class="group-card">
+      <table class="standings-table">
+        <thead><tr><th>#</th><th>Grp</th><th>Team</th><th class="pts">Pts</th><th>W</th><th>D</th><th>L</th><th>GF</th><th>GA</th><th>GD</th></tr></thead>
+        <tbody>`;
+    thirds.forEach(({ m, s, groupLabel }, idx) => {
+      const rowClass = idx < cfg.bestThirdPlace ? 'qualify' : '';
+      html += `<tr class="${rowClass}">
+        <td>${idx + 1}</td>
+        <td>${groupLabel}</td>
+        <td><div class="team-cell"><span class="flag">${m.flag}</span>${esc(m.teamName)}<span style="font-size:10px;color:var(--text-muted);margin-left:4px">(${esc(m.playerName)})</span></div></td>
+        <td class="pts">${s.points}</td><td>${s.wins}</td><td>${s.draws}</td><td>${s.losses}</td>
+        <td>${s.gf}</td><td>${s.ga}</td><td>${s.gf - s.ga}</td>
+      </tr>`;
+    });
+    html += '</tbody></table></div>';
+  }
+
   disp.innerHTML = html;
 }
 
@@ -2579,7 +2762,49 @@ function notify(msg, type = 'info') {
 
 function closeModal(id) { document.getElementById(id).classList.remove('show'); }
 
-// close modals on overlay click
+// ===================== IMPORT / EXPORT =====================
+
+function exportData() {
+  const json = JSON.stringify(DB, null, 2);
+  const blob = new Blob([json], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  const date = new Date().toISOString().slice(0, 10);
+  a.href = url;
+  a.download = `thelobby-backup-${date}.json`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  notify('✅ Data exported!', 'success');
+}
+
+function importData(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    try {
+      const parsed = JSON.parse(e.target.result);
+      if (!parsed.tournaments) throw new Error('Invalid format');
+      DB = parsed;
+      if (!DB.stats) DB.stats = { matches: 0, champions: 0 };
+      save();
+      currentTournamentId = null;
+      updateDashboard();
+      renderTournamentsList();
+      renderChampions();
+      notify('✅ Data imported successfully!', 'success');
+    } catch (err) {
+      notify('❌ Invalid JSON file.', 'error');
+    }
+    // Reset the file input so the same file can be re-imported if needed
+    event.target.value = '';
+  };
+  reader.readAsText(file);
+}
+
+
 document.querySelectorAll('.modal-overlay').forEach(m => {
   m.addEventListener('click', e => { if (e.target === m) m.classList.remove('show'); });
 });
