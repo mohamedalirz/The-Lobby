@@ -1,0 +1,12 @@
+{
+  "name": "thelobby-backend",
+  "version": "1.0.0",
+  "description": "THE LOBBY tournament manager - backend with SQLite database (no external dependencies, requires Node.js 22+)",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=22.5.0"
+  }
+}
